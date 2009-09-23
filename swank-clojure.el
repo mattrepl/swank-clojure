@@ -68,6 +68,15 @@ swank-clojure-java-path) if non-nil."
   :type 'boolean
   :group 'swank-clojure)
 
+(defface swank-clojure-dim-trace-face
+  '((((class color) (background dark))
+     (:foreground "grey50"))
+    (((class color) (background light))
+     (:foreground "grey55")))
+  "Face used to dim parentheses."
+  :group 'slime-ui)
+
+(setq swank-clojure-dim-trace-face 'swank-clojure-dim-trace-face)
 
 (defun swank-clojure-init (file encoding)
   (concat
@@ -80,7 +89,7 @@ swank-clojure-java-path) if non-nil."
            file (format "%s" encoding))))
 
 (defun swank-clojure-find-package ()
-  (let ((regexp "^(\\(clojure.core/\\)?\\(in-\\)?ns\\s-+[:']?\\([^()]+\\>\\)"))
+  (let ((regexp "^(\\(clojure.core/\\)?\\(in-\\)?ns\\s-+[:']?\\([^()\" \t\n]+\\>\\)"))
     (save-excursion
       (when (or (re-search-backward regexp nil t)
                 (re-search-forward regexp nil t))
@@ -118,7 +127,7 @@ will be used over paths too.)"
          "-classpath"
          (swank-clojure-concat-paths
           (append (list swank-clojure-jar-path
-                        swank-clojure-path)
+                        (concat swank-clojure-path "src/"))
                   swank-clojure-extra-classpaths))
          "clojure.main")
         (let ((init-opts '()))
@@ -147,5 +156,51 @@ will be used over paths too.)"
     (when (and (featurep 'paredit) paredit-mode (>= paredit-version 21))
       (define-key slime-repl-mode-map "{" 'paredit-open-curly)
       (define-key slime-repl-mode-map "}" 'paredit-close-curly))))
+
+;; Debugger
+
+(defun swank-clojure-dim-font-lock ()
+  "Dim irrelevant lines in Clojure debugger buffers."
+  (if (string-match "clojure" (buffer-name))
+      (font-lock-add-keywords nil
+                              '(("[0-9]+: \\(clojure\.\\(core\\|lang\\).*\\)"
+                                 1 swank-clojure-dim-trace-face)
+                                ("[0-9]+: \\(java.*\\)"
+                                 1 swank-clojure-dim-trace-face)
+                                ("[0-9]+: \\(swank.*\\)"
+                                 1 swank-clojure-dim-trace-face)
+                                ("\\[\\([A-Z]+\\)\\]"
+                                 1 font-lock-function-name-face)))))
+
+(add-hook 'sldb-mode-hook 'swank-clojure-dim-font-lock)
+
+;; Importer
+
+(defun swank-clojure-pick-import (classes)
+  (swank-clojure-insert-import
+   (list (if (and (boundp 'ido-mode) ido-mode)
+             (ido-completing-read "Insert import: " classes)
+           (completing-read "Insert import: " classes)))))
+
+(defun swank-clojure-insert-import (classes)
+  "Insert an :import directive in the ns macro to import full-class."
+  (if (null classes) (error "No classes matched."))
+  (if (= 1 (length classes))
+      (save-excursion
+        (goto-char (point-min))
+        (search-forward "(ns ")
+        (end-of-defun)
+        (backward-char 2)
+        (let* ((segments (split-string (first classes) "\\."))
+               (package (mapconcat 'identity (butlast segments 1) "."))
+               (class-name (car (last segments))))
+          (insert (format "\n(:import [%s %s])" package class-name)))
+        (indent-for-tab-command))
+    (swank-clojure-pick-import classes)))
+
+(defun swank-clojure-import (class)
+  (interactive (list (read-from-minibuffer "Class: " (slime-symbol-at-point))))
+  (slime-eval-async `(swank:classes-for ,class)
+                    #'swank-clojure-insert-import))
 
 (provide 'swank-clojure)
