@@ -182,7 +182,7 @@
     (list :designator symbol-name
           (cond
             macro? :macro
-            (:arglists ^var) :function
+            (:arglists (meta var)) :function
             :else :variable)
           (apply str (concat arglists (if macro? d2 d1))))))
 
@@ -207,16 +207,16 @@ Sorted alphabetically by namespace name and then symbol name, except
 that symbols accessible in the current namespace go first."
   [x y]
   (let [accessible?
-        (fn [var] (= (ns-resolve (maybe-ns *current-package*) (:name ^var))
+        (fn [var] (= (ns-resolve (maybe-ns *current-package*) (:name (meta var)))
                      var))
         ax (accessible? x) ay (accessible? y)]
     (cond
-      (and ax ay) (compare (:name ^x) (:name ^y))
+      (and ax ay) (compare (:name (meta x)) (:name (meta y)))
       ax -1
       ay 1
-      :else (let [nx (str (:ns ^x)) ny (str (:ns ^y))]
+      :else (let [nx (str (:ns (meta x))) ny (str (:ns (meta y)))]
               (if (= nx ny)
-                (compare (:name ^x) (:name ^y))
+                (compare (:name (meta x)) (:name (meta y)))
                 (compare nx ny))))))
 
 (defslimefn apropos-list-for-emacs
@@ -352,3 +352,41 @@ that symbols accessible in the current namespace go first."
      (nth (.getStackTrace *current-exception*) n)))
 
 (defslimefn create-repl [target] '("user" "user"))
+
+;;; Threads
+
+(def #^{:private true} thread-list (atom []))
+
+(defn- get-root-group [#^java.lang.ThreadGroup tg]
+  (if-let [parent (.getParent tg)]
+    (recur parent)
+    tg))
+
+(defn- get-thread-list []
+  (let [rg (get-root-group (.getThreadGroup (Thread/currentThread)))
+        arr (make-array Thread (.activeCount rg))]
+    (.enumerate rg arr true)
+    (seq arr)))
+
+(defn- extract-info [#^Thread t]
+  (map str [(.getId t) (.getName t) (.getPriority t) (.getState t)]))
+
+(defslimefn list-threads
+  "Return a list (LABELS (ID NAME STATUS ATTRS ...) ...).
+LABELS is a list of attribute names and the remaining lists are the
+corresponding attribute values per thread."
+  []
+  (reset! thread-list (get-thread-list))
+  (let [labels '(id name priority state)]
+    (cons labels (map extract-info @thread-list))))
+
+;;; TODO: Find a better way, as Thread.stop is deprecated
+(defslimefn kill-nth-thread [index]
+  (when index
+   (when-let [thread (nth @thread-list index nil)]
+     (println "Thread: " thread)
+     (.stop thread))))
+
+(defslimefn quit-thread-browser []
+  (reset! thread-list []))
+
